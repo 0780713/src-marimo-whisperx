@@ -66,7 +66,7 @@
           User={{ install_user }}
           WorkingDirectory={{ workdir }}
           Environment="PATH=/home/{{ install_user }}/venv/bin"
-          ExecStart=/home/{{ install_user }}/venv/bin/marimo edit transcribe.py --host 0.0.0.0 --port 2718 --no-token
+          ExecStart=/home/{{ install_user }}/venv/bin/marimo edit transcribe.py --host 0.0.0.0 --port 80 --no-token
           Restart=on-failure
 
           [Install]
