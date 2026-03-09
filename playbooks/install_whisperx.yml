@@ -9,11 +9,11 @@
     workdir: /home/ubuntu/whisperx
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
-    whisperx_hf_token: "{{ ansible_env.whisperx_hf_token }}"  # ResearchCloud parameter key
+    whisperx_hf_token: "{{ whisperx_hf_token }}"  # ResearchCloud parameter key
     rclone_remote_name: RD
     rclone_webdav_url: https://hr.data.surf.nl/remote.php/dav/files/NieSA@hro.nl
     rclone_user: NieSA@hro.nl
-    rclone_pass: "{{ ansible_env.rclone_webdav_pass }}"   # ResearchCloud parameter key
+    rclone_pass: "{{ rclone_webdav_pass }}"   # ResearchCloud parameter key
     rclone_remote_path: "RD:Didactiek van hoge verwachtingen/RD"
     rclone_mountpoint: /home/ubuntu/research-drive
 
