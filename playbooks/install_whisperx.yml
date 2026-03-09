@@ -36,80 +36,79 @@
         state: present
 
     # =========================================================================
-    # 2. PYTHON VIRTUAL ENVIRONMENT
+    # 2. INSTALLEER UV
     # =========================================================================
 
-    - name: Maak virtuele omgeving aan
+    - name: Installeer uv (snelle Python package manager)
       become_user: "{{ install_user }}"
-      command: python3 -m venv {{ venv_path }}
+      shell: curl -LsSf https://astral.sh/uv/install.sh | sh
+      args:
+        creates: /home/{{ install_user }}/.local/bin/uv
+
+    - name: Voeg uv toe aan PATH (bashrc)
+      become_user: "{{ install_user }}"
+      lineinfile:
+        path: /home/{{ install_user }}/.bashrc
+        line: 'export PATH="$HOME/.local/bin:$PATH"'
+        create: yes
+
+    # =========================================================================
+    # 3. PYTHON VIRTUAL ENVIRONMENT
+    # =========================================================================
+
+    - name: Maak virtuele omgeving aan met uv
+      become_user: "{{ install_user }}"
+      command: /home/{{ install_user }}/.local/bin/uv venv {{ venv_path }}
       args:
         creates: "{{ venv_path }}"
 
-    - name: Upgrade pip in venv
+    # =========================================================================
+    # 4. INSTALLEER MARIMO
+    # =========================================================================
+
+    - name: Installeer Marimo via uv
       become_user: "{{ install_user }}"
-      pip:
-        name: pip
-        state: latest
-        virtualenv: "{{ venv_path }}"
+      command: /home/{{ install_user }}/.local/bin/uv pip install marimo --python {{ venv_path }}/bin/python
+      args:
+        creates: "{{ venv_path }}/bin/marimo"
 
     # =========================================================================
-    # 3. INSTALLEER MARIMO
+    # 5. INSTALLEER WHISPERX + DEPENDENCIES
     # =========================================================================
-
-    - name: Installeer Marimo
-      become_user: "{{ install_user }}"
-      pip:
-        name: marimo
-        virtualenv: "{{ venv_path }}"
-
-    # =========================================================================
-    # 4. INSTALLEER WHISPERX + DEPENDENCIES
-    # =========================================================================
-    # WhisperX heeft PyTorch met CUDA nodig. Op een workspace ZONDER
-    # CUDA-component installeren we CPU-versie. Met CUDA-component
-    # detecteert torch automatisch de GPU.
 
     - name: Controleer of CUDA beschikbaar is
       stat:
         path: /usr/local/cuda
       register: cuda_check
 
-    - name: Installeer PyTorch (CUDA) als CUDA aanwezig
+    - name: Installeer PyTorch (CUDA) via uv
       become_user: "{{ install_user }}"
-      pip:
-        name:
-          - torch
-          - torchaudio
-        virtualenv: "{{ venv_path }}"
-        extra_args: "--index-url https://download.pytorch.org/whl/cu121"
+      command: >
+        /home/{{ install_user }}/.local/bin/uv pip install torch torchaudio
+        --index-url https://download.pytorch.org/whl/cu121
+        --python {{ venv_path }}/bin/python
       when: cuda_check.stat.exists
 
-    - name: Installeer PyTorch (CPU) als geen CUDA
+    - name: Installeer PyTorch (CPU) via uv
       become_user: "{{ install_user }}"
-      pip:
-        name:
-          - torch
-          - torchaudio
-        virtualenv: "{{ venv_path }}"
-        extra_args: "--index-url https://download.pytorch.org/whl/cpu"
+      command: >
+        /home/{{ install_user }}/.local/bin/uv pip install torch torchaudio
+        --index-url https://download.pytorch.org/whl/cpu
+        --python {{ venv_path }}/bin/python
       when: not cuda_check.stat.exists
 
-    - name: Installeer WhisperX
+    - name: Installeer WhisperX via uv
       become_user: "{{ install_user }}"
-      pip:
-        name: whisperx
-        virtualenv: "{{ venv_path }}"
+      command: /home/{{ install_user }}/.local/bin/uv pip install whisperx --python {{ venv_path }}/bin/python
 
-    - name: Installeer extra Python packages
+    - name: Installeer extra Python packages via uv
       become_user: "{{ install_user }}"
-      pip:
-        name:
-          - pandas
-          - openpyxl
-        virtualenv: "{{ venv_path }}"
+      command: >
+        /home/{{ install_user }}/.local/bin/uv pip install pandas openpyxl
+        --python {{ venv_path }}/bin/python
 
     # =========================================================================
-    # 5. WERKMAP
+    # 6. WERKMAP
     # =========================================================================
 
     - name: Maak werkmap aan
@@ -146,7 +145,7 @@
       command: rclone obscure "{{ rclone_pass }}"
       register: rclone_pass_obscured
       changed_when: false
-      no_log: true
+      no_log: false  # DEBUG: was true
 
     - name: Schrijf rclone.conf
       become_user: "{{ install_user }}"
@@ -160,6 +159,7 @@
           vendor = nextcloud
           user = {{ rclone_user }}
           pass = {{ rclone_pass_obscured.stdout }}
+      no_log: false  # DEBUG: was ontbrekend (gevoelig: obfuscated wachtwoord)
 
     - name: Maak mountpoint aan
       file:
@@ -206,8 +206,6 @@
     # =========================================================================
     # 7. NGINX REVERSE PROXY CONFIGURATIE  
     # =========================================================================
-    # SRC-Nginx draait al op poort 80/443. We configureren nginx om
-    # verkeer door te sturen naar Marimo op de interne poort.
 
     - name: Controleer of nginx app-location-conf.d directory bestaat
       file:
@@ -257,6 +255,7 @@
 
           [Install]
           WantedBy=multi-user.target
+      no_log: false  # DEBUG: was ontbrekend (gevoelig: HF_TOKEN zichtbaar)
 
     - name: Start en activeer Marimo service
       systemd:
