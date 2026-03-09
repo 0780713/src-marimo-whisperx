@@ -1,302 +1,290 @@
 ---
-- name: Installeer Marimo + WhisperX op SURF Research Cloud
+- name: Install Marimo + WhisperX on SURF Research Cloud
   hosts: localhost
   gather_facts: true
   become: true
 
   vars:
     install_user: ubuntu
-    workdir: /home/ubuntu/whisperx
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
-    whisperx_hf_token: "{{ whisperx_hf_token }}"  # ResearchCloud parameter key
+
+    # SURF parameters (must exist in the catalog item)
+    # whisperx_hf_token
+    # rclone_webdav_pass
+
     rclone_remote_name: RD
     rclone_webdav_url: https://hr.data.surf.nl/remote.php/dav/files/NieSA@hro.nl
     rclone_user: NieSA@hro.nl
-    rclone_pass: "{{ rclone_webdav_pass }}"   # ResearchCloud parameter key
     rclone_remote_path: "RD:Didactiek van hoge verwachtingen/RD"
     rclone_mountpoint: /home/ubuntu/research-drive
 
+    # Work directly inside the mounted Research Drive
+    workdir: "{{ rclone_mountpoint }}"
+
   tasks:
 
-    # =========================================================================
-    # 1. SYSTEEM DEPENDENCIES
-    # =========================================================================
+  # ---------------------------------------------------------------------------
+  # SYSTEM DEPENDENCIES
+  # ---------------------------------------------------------------------------
 
-    - name: Installeer systeempakketten
-      apt:
-        update_cache: yes
-        name:
-          - python3-pip
-          - python3-venv
-          - ffmpeg
-          - libsndfile1
-          - git
-          - fuse3
-        state: present
+  - name: Install system packages
+    apt:
+      update_cache: yes
+      cache_valid_time: 3600
+      name:
+        - python3-pip
+        - python3-venv
+        - ffmpeg
+        - libsndfile1
+        - git
+        - fuse3
+        - rclone
+      state: present
 
-    # =========================================================================
-    # 2. INSTALLEER UV
-    # =========================================================================
+  # ---------------------------------------------------------------------------
+  # INSTALL UV
+  # ---------------------------------------------------------------------------
 
-    - name: Installeer uv (snelle Python package manager)
-      become_user: "{{ install_user }}"
-      shell: curl -LsSf https://astral.sh/uv/install.sh | sh
-      args:
-        creates: /home/{{ install_user }}/.local/bin/uv
+  - name: Install uv package manager
+    become_user: "{{ install_user }}"
+    shell: curl -LsSf https://astral.sh/uv/install.sh | sh
+    args:
+      creates: /home/{{ install_user }}/.local/bin/uv
 
-    - name: Voeg uv toe aan PATH (bashrc)
-      become_user: "{{ install_user }}"
-      lineinfile:
-        path: /home/{{ install_user }}/.bashrc
-        line: 'export PATH="$HOME/.local/bin:$PATH"'
-        create: yes
+  - name: Ensure uv in PATH
+    become_user: "{{ install_user }}"
+    lineinfile:
+      path: /home/{{ install_user }}/.bashrc
+      line: 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"'
+      create: yes
 
-    # =========================================================================
-    # 3. PYTHON VIRTUAL ENVIRONMENT
-    # =========================================================================
+  # ---------------------------------------------------------------------------
+  # PYTHON ENVIRONMENT
+  # ---------------------------------------------------------------------------
 
-    - name: Maak virtuele omgeving aan met uv
-      become_user: "{{ install_user }}"
-      command: /home/{{ install_user }}/.local/bin/uv venv {{ venv_path }}
-      args:
-        creates: "{{ venv_path }}"
+  - name: Create virtual environment
+    become_user: "{{ install_user }}"
+    command: /home/{{ install_user }}/.local/bin/uv venv {{ venv_path }}
+    args:
+      creates: "{{ venv_path }}"
 
-    # =========================================================================
-    # 4. INSTALLEER MARIMO
-    # =========================================================================
+  - name: Detect GPU
+    command: nvidia-smi
+    register: gpu_check
+    ignore_errors: yes
+    changed_when: false
 
-    - name: Installeer Marimo via uv
-      become_user: "{{ install_user }}"
-      command: /home/{{ install_user }}/.local/bin/uv pip install marimo --python {{ venv_path }}/bin/python
-      args:
-        creates: "{{ venv_path }}/bin/marimo"
+  - name: Install PyTorch CUDA
+    become_user: "{{ install_user }}"
+    command: >
+      /home/{{ install_user }}/.local/bin/uv pip install
+      torch torchaudio
+      --index-url https://download.pytorch.org/whl/cu121
+      --python {{ venv_path }}/bin/python
+    when: gpu_check.rc == 0
 
-    # =========================================================================
-    # 5. INSTALLEER WHISPERX + DEPENDENCIES
-    # =========================================================================
+  - name: Install PyTorch CPU
+    become_user: "{{ install_user }}"
+    command: >
+      /home/{{ install_user }}/.local/bin/uv pip install
+      torch torchaudio
+      --index-url https://download.pytorch.org/whl/cpu
+      --python {{ venv_path }}/bin/python
+    when: gpu_check.rc != 0
 
-    - name: Controleer of CUDA beschikbaar is
-      stat:
-        path: /usr/local/cuda
-      register: cuda_check
+  - name: Install Python packages
+    become_user: "{{ install_user }}"
+    command: >
+      /home/{{ install_user }}/.local/bin/uv pip install
+      marimo whisperx faster-whisper ctranslate2
+      pandas openpyxl numpy tqdm
+      --python {{ venv_path }}/bin/python
 
-    - name: Installeer PyTorch (CUDA) via uv
-      become_user: "{{ install_user }}"
-      command: >
-        /home/{{ install_user }}/.local/bin/uv pip install torch torchaudio
-        --index-url https://download.pytorch.org/whl/cu121
-        --python {{ venv_path }}/bin/python
-      when: cuda_check.stat.exists
+  # ---------------------------------------------------------------------------
+  # HUGGINGFACE TOKEN
+  # ---------------------------------------------------------------------------
 
-    - name: Installeer PyTorch (CPU) via uv
-      become_user: "{{ install_user }}"
-      command: >
-        /home/{{ install_user }}/.local/bin/uv pip install torch torchaudio
-        --index-url https://download.pytorch.org/whl/cpu
-        --python {{ venv_path }}/bin/python
-      when: not cuda_check.stat.exists
+  - name: Write HuggingFace token to environment file
+    copy:
+      dest: /etc/whisperx.env
+      mode: "0600"
+      content: |
+        HUGGINGFACE_TOKEN={{ whisperx_hf_token }}
+    no_log: true
 
-    - name: Installeer WhisperX via uv
-      become_user: "{{ install_user }}"
-      command: /home/{{ install_user }}/.local/bin/uv pip install whisperx --python {{ venv_path }}/bin/python
+  # ---------------------------------------------------------------------------
+  # RCLONE CONFIG
+  # ---------------------------------------------------------------------------
 
-    - name: Installeer extra Python packages via uv
-      become_user: "{{ install_user }}"
-      command: >
-        /home/{{ install_user }}/.local/bin/uv pip install pandas openpyxl
-        --python {{ venv_path }}/bin/python
+  - name: Enable allow_other for FUSE
+    lineinfile:
+      path: /etc/fuse.conf
+      line: user_allow_other
+      create: yes
 
-    # =========================================================================
-    # 6. WERKMAP
-    # =========================================================================
+  - name: Create rclone config directory
+    become_user: "{{ install_user }}"
+    file:
+      path: /home/{{ install_user }}/.config/rclone
+      state: directory
+      mode: "0700"
 
-    - name: Maak werkmap aan
-      file:
-        path: "{{ workdir }}"
-        state: directory
-        owner: "{{ install_user }}"
-        mode: "0755"
+  - name: Obscure rclone password
+    become_user: "{{ install_user }}"
+    command: rclone obscure "{{ rclone_webdav_pass }}"
+    register: rclone_pass_obscured
+    changed_when: false
+    no_log: true
 
-    # =========================================================================
-    # 6. RCLONE — RESEARCH DRIVE KOPPELEN
-    # =========================================================================
+  - name: Write rclone config
+    become_user: "{{ install_user }}"
+    copy:
+      dest: /home/{{ install_user }}/.config/rclone/rclone.conf
+      mode: "0600"
+      content: |
+        [{{ rclone_remote_name }}]
+        type = webdav
+        url = {{ rclone_webdav_url }}
+        vendor = nextcloud
+        user = {{ rclone_user }}
+        pass = {{ rclone_pass_obscured.stdout }}
 
-    - name: Zorg dat user_allow_other in fuse.conf staat
-      lineinfile:
-        path: /etc/fuse.conf
-        line: user_allow_other
-        create: yes
+  - name: Create mount directory
+    file:
+      path: "{{ rclone_mountpoint }}"
+      state: directory
+      owner: "{{ install_user }}"
+      mode: "0755"
 
-    - name: Installeer rclone
-      apt:
-        name: rclone
-        state: present
+  - name: Create rclone mount systemd service
+    copy:
+      dest: /etc/systemd/system/rclone-mount.service
+      content: |
+        [Unit]
+        Description=Rclone Mount Research Drive
+        After=network-online.target
+        Wants=network-online.target
 
-    - name: Maak rclone config directory aan
-      become_user: "{{ install_user }}"
-      file:
-        path: /home/{{ install_user }}/.config/rclone
-        state: directory
-        mode: "0700"
+        [Service]
+        Type=simple
+        User={{ install_user }}
+        ExecStart=/usr/bin/rclone mount \
+          {{ rclone_remote_path }} {{ rclone_mountpoint }} \
+          --allow-other \
+          --dir-cache-time 12h \
+          --vfs-cache-mode full \
+          --vfs-cache-max-size 10G
+        ExecStop=/bin/fusermount -u {{ rclone_mountpoint }}
+        Restart=on-failure
+        RestartSec=5
 
-    - name: Obfusceer rclone wachtwoord
-      become_user: "{{ install_user }}"
-      command: rclone obscure "{{ rclone_pass }}"
-      register: rclone_pass_obscured
-      changed_when: false
-      no_log: false  # DEBUG: was true
+        [Install]
+        WantedBy=multi-user.target
 
-    - name: Schrijf rclone.conf
-      become_user: "{{ install_user }}"
-      copy:
-        dest: /home/{{ install_user }}/.config/rclone/rclone.conf
-        mode: "0600"
-        content: |
-          [{{ rclone_remote_name }}]
-          type = webdav
-          url = {{ rclone_webdav_url }}
-          vendor = nextcloud
-          user = {{ rclone_user }}
-          pass = {{ rclone_pass_obscured.stdout }}
-      no_log: false  # DEBUG: was ontbrekend (gevoelig: obfuscated wachtwoord)
+  - name: Start rclone mount
+    systemd:
+      name: rclone-mount
+      enabled: yes
+      state: started
+      daemon_reload: yes
 
-    - name: Maak mountpoint aan
-      file:
-        path: "{{ rclone_mountpoint }}"
-        state: directory
-        owner: "{{ install_user }}"
-        mode: "0755"
+  - name: Wait for rclone mount
+    command: mountpoint -q {{ rclone_mountpoint }}
+    register: mount_check
+    retries: 10
+    delay: 3
+    until: mount_check.rc == 0
 
-    - name: Maak systemd service aan voor rclone mount
-      copy:
-        dest: /etc/systemd/system/rclone-mount.service
-        content: |
-          [Unit]
-          Description=rclone mount Research Drive
-          After=network-online.target
-          Wants=network-online.target
+  # ---------------------------------------------------------------------------
+  # NGINX REVERSE PROXY
+  # ---------------------------------------------------------------------------
 
-          [Service]
-          Type=notify
-          User={{ install_user }}
-          ExecStart=/usr/bin/rclone mount \
-              {{ rclone_remote_path }} {{ rclone_mountpoint }} \
-              --vfs-cache-mode writes \
-              --allow-other
-          ExecStop=/bin/fusermount -u {{ rclone_mountpoint }}
-          Restart=on-failure
-          RestartSec=5
+  - name: Ensure nginx app location directory
+    file:
+      path: /etc/nginx/app-location-conf.d
+      state: directory
+      mode: "0755"
 
-          [Install]
-          WantedBy=multi-user.target
+  - name: Configure nginx reverse proxy for Marimo
+    copy:
+      dest: /etc/nginx/app-location-conf.d/marimo.conf
+      content: |
+        location / {
+            proxy_pass http://127.0.0.1:{{ marimo_port }};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400;
+            proxy_buffering off;
+        }
+    notify: restart nginx
 
-    - name: Start en activeer rclone mount service
-      systemd:
-        name: rclone-mount
-        enabled: yes
-        state: started
-        daemon_reload: yes
+  # ---------------------------------------------------------------------------
+  # MARIMO SERVICE
+  # ---------------------------------------------------------------------------
 
-    - name: Wacht tot mountpoint beschikbaar is
-      wait_for:
-        path: "{{ rclone_mountpoint }}"
-        timeout: 15
+  - name: Create Marimo systemd service
+    copy:
+      dest: /etc/systemd/system/marimo.service
+      content: |
+        [Unit]
+        Description=Marimo Notebook Server
+        After=network.target
 
-    # =========================================================================
-    # 7. NGINX REVERSE PROXY CONFIGURATIE  
-    # =========================================================================
+        [Service]
+        Type=simple
+        User={{ install_user }}
+        WorkingDirectory={{ workdir }}
+        EnvironmentFile=/etc/whisperx.env
+        Environment="PATH={{ venv_path }}/bin:/usr/local/bin:/usr/bin:/bin"
+        ExecStart={{ venv_path }}/bin/marimo edit --host 127.0.0.1 --port {{ marimo_port }} --no-token
+        Restart=on-failure
+        RestartSec=5
 
-    - name: Controleer of nginx app-location-conf.d directory bestaat
-      file:
-        path: /etc/nginx/app-location-conf.d
-        state: directory
-        mode: "0755"
+        [Install]
+        WantedBy=multi-user.target
 
-    - name: Maak nginx configuratie aan voor Marimo
-      copy:
-        dest: /etc/nginx/app-location-conf.d/marimo.conf
-        content: |
-          location / {
-              proxy_pass http://127.0.0.1:{{ marimo_port }};
-              proxy_http_version 1.1;
-              proxy_set_header Upgrade $http_upgrade;
-              proxy_set_header Connection "upgrade";
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-              proxy_read_timeout 86400;
-              proxy_buffering off;
-          }
-      notify: Herstart nginx
+  - name: Start Marimo
+    systemd:
+      name: marimo
+      enabled: yes
+      state: started
+      daemon_reload: yes
 
-    # =========================================================================
-    # 8. SYSTEMD SERVICE VOOR MARIMO
-    # =========================================================================
+  # ---------------------------------------------------------------------------
+  # VERIFICATION
+  # ---------------------------------------------------------------------------
 
-    - name: Maak systemd service aan voor Marimo
-      copy:
-        dest: /etc/systemd/system/marimo.service
-        content: |
-          [Unit]
-          Description=Marimo Notebook Server
-          After=network.target
+  - name: Wait for Marimo port
+    wait_for:
+      port: "{{ marimo_port }}"
+      delay: 3
+      timeout: 30
 
-          [Service]
-          Type=simple
-          User={{ install_user }}
-          WorkingDirectory={{ workdir }}
-          Environment="PATH={{ venv_path }}/bin:/usr/local/bin:/usr/bin:/bin"
-          Environment="HF_TOKEN={{ whisperx_hf_token }}"
-          ExecStart={{ venv_path }}/bin/marimo edit --host 0.0.0.0 --port {{ marimo_port }} --no-token
-          Restart=on-failure
-          RestartSec=5
+  - name: Verify WhisperX installation
+    become_user: "{{ install_user }}"
+    command: "{{ venv_path }}/bin/python -c 'import whisperx; print(\"WhisperX OK\")'"
+    register: whisperx_check
+    changed_when: false
+    ignore_errors: yes
 
-          [Install]
-          WantedBy=multi-user.target
-      no_log: false  # DEBUG: was ontbrekend (gevoelig: HF_TOKEN zichtbaar)
-
-    - name: Start en activeer Marimo service
-      systemd:
-        name: marimo
-        enabled: yes
-        state: started
-        daemon_reload: yes
-
-    # =========================================================================
-    # 9. VERIFICATIE
-    # =========================================================================
-
-    - name: Wacht tot Marimo is opgestart
-      wait_for:
-        port: "{{ marimo_port }}"
-        delay: 3
-        timeout: 30
-
-    - name: Verifieer WhisperX installatie
-      become_user: "{{ install_user }}"
-      command: "{{ venv_path }}/bin/python -c 'import whisperx; print(\"WhisperX OK\")'"
-      register: whisperx_check
-      changed_when: false
-      ignore_errors: yes
-
-    - name: Installatie voltooid
-      debug:
-        msg: |
-          === INSTALLATIE VOLTOOID ===
-          Marimo draait op interne poort {{ marimo_port }}
-          Bereikbaar via: https://{{ ansible_fqdn | default('WORKSPACE_URL') }}
-          WhisperX: {{ whisperx_check.stdout | default('check failed') }}
-          Werkmap: {{ workdir }}
-          CUDA: {{ 'JA' if cuda_check.stat.exists else 'NEE - voeg CUDA component toe!' }}
-
-  # =========================================================================
-  # HANDLERS
-  # =========================================================================
+  - name: Installation summary
+    debug:
+      msg: |
+        === INSTALLATION COMPLETE ===
+        Marimo running on port {{ marimo_port }}
+        WhisperX status: {{ whisperx_check.stdout | default('check failed') }}
+        Workdir (Research Drive): {{ workdir }}
+        GPU detected: {{ 'YES' if gpu_check.rc == 0 else 'NO (CPU mode)' }}
 
   handlers:
-    - name: Herstart nginx
-      systemd:
-        name: nginx
-        state: reloaded
+
+  - name: restart nginx
+    systemd:
+      name: nginx
+      state: restarted
