@@ -9,6 +9,13 @@
     workdir: /home/ubuntu/whisperx
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
+    whisperx_hf_token: "{{ ansible_env.whisperx_hf_token }}"  # ResearchCloud parameter key
+    rclone_remote_name: RD
+    rclone_webdav_url: https://hr.data.surf.nl/remote.php/dav/files/NieSA@hro.nl
+    rclone_user: NieSA@hro.nl
+    rclone_pass: "{{ ansible_env.rclone_webdav_pass }}"   # ResearchCloud parameter key
+    rclone_remote_path: "RD:Didactiek van hoge verwachtingen/RD"
+    rclone_mountpoint: /home/ubuntu/research-drive
 
   tasks:
 
@@ -25,6 +32,7 @@
           - ffmpeg
           - libsndfile1
           - git
+          - fuse3
         state: present
 
     # =========================================================================
@@ -101,7 +109,7 @@
         virtualenv: "{{ venv_path }}"
 
     # =========================================================================
-    # 5. WERKMAP EN VOORBEELD NOTEBOOK
+    # 5. WERKMAP
     # =========================================================================
 
     - name: Maak werkmap aan
@@ -111,36 +119,92 @@
         owner: "{{ install_user }}"
         mode: "0755"
 
-    - name: Plaats test notebook
+    # =========================================================================
+    # 6. RCLONE — RESEARCH DRIVE KOPPELEN
+    # =========================================================================
+
+    - name: Zorg dat user_allow_other in fuse.conf staat
+      lineinfile:
+        path: /etc/fuse.conf
+        line: user_allow_other
+        create: yes
+
+    - name: Installeer rclone
+      apt:
+        name: rclone
+        state: present
+
+    - name: Maak rclone config directory aan
+      become_user: "{{ install_user }}"
+      file:
+        path: /home/{{ install_user }}/.config/rclone
+        state: directory
+        mode: "0700"
+
+    - name: Obfusceer rclone wachtwoord
+      become_user: "{{ install_user }}"
+      command: rclone obscure "{{ rclone_pass }}"
+      register: rclone_pass_obscured
+      changed_when: false
+      no_log: true
+
+    - name: Schrijf rclone.conf
       become_user: "{{ install_user }}"
       copy:
-        dest: "{{ workdir }}/transcribe.py"
+        dest: /home/{{ install_user }}/.config/rclone/rclone.conf
+        mode: "0600"
         content: |
-          import marimo as mo
+          [{{ rclone_remote_name }}]
+          type = webdav
+          url = {{ rclone_webdav_url }}
+          vendor = nextcloud
+          user = {{ rclone_user }}
+          pass = {{ rclone_pass_obscured.stdout }}
 
-          app = mo.App()
+    - name: Maak mountpoint aan
+      file:
+        path: "{{ rclone_mountpoint }}"
+        state: directory
+        owner: "{{ install_user }}"
+        mode: "0755"
 
-          @app.cell
-          def stap1():
-              import torch
-              mo.md(f"""
-              # WhisperX Transcriptie
+    - name: Maak systemd service aan voor rclone mount
+      copy:
+        dest: /etc/systemd/system/rclone-mount.service
+        content: |
+          [Unit]
+          Description=rclone mount Research Drive
+          After=network-online.target
+          Wants=network-online.target
 
-              **CUDA beschikbaar:** {torch.cuda.is_available()}
-              {"**GPU:** " + torch.cuda.get_device_name(0) if torch.cuda.is_available() else "Draait op CPU"}
-              """)
+          [Service]
+          Type=notify
+          User={{ install_user }}
+          ExecStart=/usr/bin/rclone mount \
+              {{ rclone_remote_path }} {{ rclone_mountpoint }} \
+              --vfs-cache-mode writes \
+              --allow-other
+          ExecStop=/bin/fusermount -u {{ rclone_mountpoint }}
+          Restart=on-failure
+          RestartSec=5
 
-          @app.cell
-          def stap2():
-              mo.md("""
-              ## Gebruik
+          [Install]
+          WantedBy=multi-user.target
 
-              Upload een audiobestand en voer de transcriptie uit.
-              Resultaten worden opgeslagen in `/home/ubuntu/whisperx/output/`.
-              """)
+    - name: Start en activeer rclone mount service
+      systemd:
+        name: rclone-mount
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Wacht tot mountpoint beschikbaar is
+      wait_for:
+        path: "{{ rclone_mountpoint }}"
+        timeout: 15
 
     # =========================================================================
-    # 6. NGINX REVERSE PROXY CONFIGURATIE
+    # 7. NGINX REVERSE PROXY CONFIGURATIE  
     # =========================================================================
     # SRC-Nginx draait al op poort 80/443. We configureren nginx om
     # verkeer door te sturen naar Marimo op de interne poort.
@@ -170,7 +234,7 @@
       notify: Herstart nginx
 
     # =========================================================================
-    # 7. SYSTEMD SERVICE VOOR MARIMO
+    # 8. SYSTEMD SERVICE VOOR MARIMO
     # =========================================================================
 
     - name: Maak systemd service aan voor Marimo
@@ -186,6 +250,7 @@
           User={{ install_user }}
           WorkingDirectory={{ workdir }}
           Environment="PATH={{ venv_path }}/bin:/usr/local/bin:/usr/bin:/bin"
+          Environment="HF_TOKEN={{ whisperx_hf_token }}"
           ExecStart={{ venv_path }}/bin/marimo edit --host 0.0.0.0 --port {{ marimo_port }} --no-token
           Restart=on-failure
           RestartSec=5
@@ -201,7 +266,7 @@
         daemon_reload: yes
 
     # =========================================================================
-    # 8. VERIFICATIE
+    # 9. VERIFICATIE
     # =========================================================================
 
     - name: Wacht tot Marimo is opgestart
