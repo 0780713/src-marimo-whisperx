@@ -1,5 +1,5 @@
 ---
-- name: Installeer Marimo + WhisperX op SURF Research Cloud
+- name: Installeer Marimo + WhisperX + uv op SURF Research Cloud
   hosts: localhost
   gather_facts: true
   become: true
