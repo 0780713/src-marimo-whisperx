@@ -1,12 +1,12 @@
 ---
-- name: Installeer Marimo op SURF Research Cloud v1
+- name: Installeer Marimo + WhisperX op SURF Research Cloud
   hosts: localhost
   gather_facts: true
   become: true
 
   vars:
     install_user: ubuntu
-    workdir: /home/ubuntu/symlink
+    workdir: /home/ubuntu/researchdrive
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
 
@@ -61,6 +61,11 @@
     # CUDA-component installeren we CPU-versie. Met CUDA-component
     # detecteert torch automatisch de GPU.
 
+    - name: Controleer of CUDA beschikbaar is
+      stat:
+        path: /usr/local/cuda
+      register: cuda_check
+
     - name: Installeer PyTorch (CUDA) als CUDA aanwezig
       become_user: "{{ install_user }}"
       pip:
@@ -69,6 +74,17 @@
           - torchaudio
         virtualenv: "{{ venv_path }}"
         extra_args: "--index-url https://download.pytorch.org/whl/cu121"
+      when: cuda_check.stat.exists
+
+    - name: Installeer PyTorch (CPU) als geen CUDA
+      become_user: "{{ install_user }}"
+      pip:
+        name:
+          - torch
+          - torchaudio
+        virtualenv: "{{ venv_path }}"
+        extra_args: "--index-url https://download.pytorch.org/whl/cpu"
+      when: not cuda_check.stat.exists
 
     - name: Installeer WhisperX
       become_user: "{{ install_user }}"
@@ -86,10 +102,48 @@
         virtualenv: "{{ venv_path }}"
 
     # =========================================================================
-    # 5. NGINX REVERSE PROXY CONFIGURATIE
+    # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
     # =========================================================================
-    # SRC-Nginx draait al op poort 80/443. We configureren nginx om
-    # verkeer door te sturen naar Marimo op de interne poort.
+    # ResearchDrive wordt door SRC gemount onder de home van de portaalgebruiker
+    # (bijv. /home/svannieuwe/researchdrive). We maken die toegankelijk voor
+    # ubuntu via een symlink.
+
+    - name: Zoek portaalgebruiker (niet ubuntu) in /home
+      shell: ls /home | grep -v ubuntu | head -1
+      register: portal_user
+      changed_when: false
+
+    - name: Geef ubuntu toegang tot portaalgebruiker home
+      file:
+        path: "/home/{{ portal_user.stdout }}"
+        mode: "0755"
+      when: portal_user.stdout != ""
+
+    - name: Verwijder lokale werkmap als die bestaat
+      file:
+        path: "{{ workdir }}"
+        state: absent
+      when: portal_user.stdout != ""
+
+    - name: Maak symlink naar researchdrive van portaalgebruiker
+      file:
+        src: "/home/{{ portal_user.stdout }}/researchdrive"
+        dest: "{{ workdir }}"
+        state: link
+        owner: "{{ install_user }}"
+      when: portal_user.stdout != ""
+
+    - name: Maak lokale werkmap als fallback (geen portaalgebruiker gevonden)
+      file:
+        path: "{{ workdir }}"
+        state: directory
+        owner: "{{ install_user }}"
+        mode: "0755"
+      when: portal_user.stdout == ""
+
+    # =========================================================================
+    # 6. NGINX REVERSE PROXY CONFIGURATIE
+    # =========================================================================
 
     - name: Controleer of nginx app-location-conf.d directory bestaat
       file:
@@ -116,7 +170,7 @@
       notify: Herstart nginx
 
     # =========================================================================
-    # 6. SYSTEMD SERVICE VOOR MARIMO
+    # 7. SYSTEMD SERVICE VOOR MARIMO
     # =========================================================================
 
     - name: Maak systemd service aan voor Marimo
@@ -147,7 +201,7 @@
         daemon_reload: yes
 
     # =========================================================================
-    # 7. VERIFICATIE
+    # 8. VERIFICATIE
     # =========================================================================
 
     - name: Wacht tot Marimo is opgestart
@@ -171,31 +225,11 @@
           Bereikbaar via: https://{{ ansible_fqdn | default('WORKSPACE_URL') }}
           WhisperX: {{ whisperx_check.stdout | default('check failed') }}
           Werkmap: {{ workdir }}
+          ResearchDrive portaalgebruiker: {{ portal_user.stdout | default('niet gevonden') }}
           CUDA: {{ 'JA' if cuda_check.stat.exists else 'NEE - voeg CUDA component toe!' }}
 
   # =========================================================================
-  # 8. RESEARCHDRIVE KOPPELEN AAN UBUNTU
-  # =========================================================================
-  
-  - name: Verwijder lokale researchdrive map
-    file:
-      path: /home/ubuntu/symlink
-      state: absent
-  
-  - name: Maak symlink naar svannieuwe researchdrive
-    file:
-      src: /home/svannieuwe/researchdrive
-      dest: /home/ubuntu/symlink
-      state: link
-      owner: ubuntu
-  
-  - name: Geef ubuntu toegang tot svannieuwe home
-    file:
-      path: /home/svannieuwe
-      mode: "0755"
-  
-  # =========================================================================
-  # 9. HANDLERS
+  # HANDLERS
   # =========================================================================
 
   handlers:
