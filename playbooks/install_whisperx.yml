@@ -114,7 +114,7 @@
     - name: Plaats test notebook
       become_user: "{{ install_user }}"
       copy:
-        dest: "{{ workdir }}/transcribe.py"
+        dest: "{{ workdir }}/transcribe_check.py"
         content: |
           import marimo as mo
 
