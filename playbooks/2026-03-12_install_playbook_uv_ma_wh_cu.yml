@@ -101,25 +101,43 @@
         virtualenv: "{{ venv_path }}"
 
     # # =========================================================================
-    # # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
+    # # 5. WERKMAP EN VOORBEELD NOTEBOOK
     # # =========================================================================
-    
-    # - name: Verwijder lokale researchdrive map
+
+    # - name: Maak werkmap aan
     #   file:
-    #     path: /home/ubuntu/researchdrive
-    #     state: absent
-    
-    # - name: Maak symlink naar svannieuwe researchdrive
-    #   file:
-    #     src: /home/svannieuwe/researchdrive
-    #     dest: /home/ubuntu/researchdrive
-    #     state: link
-    #     owner: ubuntu
-    
-    # - name: Geef ubuntu toegang tot svannieuwe home
-    #   file:
-    #     path: /home/svannieuwe
+    #     path: "{{ workdir }}"
+    #     state: directory
+    #     owner: "{{ install_user }}"
     #     mode: "0755"
+
+    # - name: Plaats test notebook
+    #   become_user: "{{ install_user }}"
+    #   copy:
+    #     dest: "{{ workdir }}/transcribe_check.py"
+    #     content: |
+    #       import marimo as mo
+
+    #       app = mo.App()
+
+    #       @app.cell
+    #       def stap1():
+    #           import torch
+    #           mo.md(f"""
+    #           # WhisperX Transcriptie
+
+    #           **CUDA beschikbaar:** {torch.cuda.is_available()}
+    #           {"**GPU:** " + torch.cuda.get_device_name(0) if torch.cuda.is_available() else "Draait op CPU"}
+    #           """)
+
+    #       @app.cell
+    #       def stap2():
+    #           mo.md("""
+    #           ## Gebruik
+
+    #           Upload een audiobestand en voer de transcriptie uit.
+    #           Resultaten worden opgeslagen in `/home/ubuntu/whisperx/output/`.
+    #           """)
 
     # =========================================================================
     # 6. NGINX REVERSE PROXY CONFIGURATIE
