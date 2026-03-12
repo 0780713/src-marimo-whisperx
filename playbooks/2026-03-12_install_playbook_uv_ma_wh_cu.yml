@@ -1,5 +1,5 @@
 ---
-- name: Installeer Marimo + WhisperX + uv op SURF Research Cloud
+- name: Installeer Marimo + WhisperX op SURF Research Cloud
   hosts: localhost
   gather_facts: true
   become: true
@@ -41,13 +41,6 @@
       become_user: "{{ install_user }}"
       pip:
         name: pip
-        state: latest
-        virtualenv: "{{ venv_path }}"
-
-    - name: Installeer uv in venv
-      become_user: "{{ install_user }}"
-      pip:
-        name: uv
         state: latest
         virtualenv: "{{ venv_path }}"
 
@@ -105,16 +98,31 @@
         name:
           - pandas
           - openpyxl
-          - numpy
-          - reportlab
-          - matplotlib
-          - seaborn
-          - altair
-          - anywidget
         virtualenv: "{{ venv_path }}"
 
     # =========================================================================
-    # 5. NGINX REVERSE PROXY CONFIGURATIE
+    # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
+    # =========================================================================
+    
+    - name: Verwijder lokale researchdrive map
+      file:
+        path: /home/ubuntu/researchdrive
+        state: absent
+    
+    - name: Maak symlink naar svannieuwe researchdrive
+      file:
+        src: /home/svannieuwe/researchdrive
+        dest: /home/ubuntu/researchdrive
+        state: link
+        owner: ubuntu
+    
+    - name: Geef ubuntu toegang tot svannieuwe home
+      file:
+        path: /home/svannieuwe
+        mode: "0755"
+
+    # =========================================================================
+    # 6. NGINX REVERSE PROXY CONFIGURATIE
     # =========================================================================
     # SRC-Nginx draait al op poort 80/443. We configureren nginx om
     # verkeer door te sturen naar Marimo op de interne poort.
@@ -144,7 +152,7 @@
       notify: Herstart nginx
 
     # =========================================================================
-    # 6. SYSTEMD SERVICE VOOR MARIMO
+    # 7. SYSTEMD SERVICE VOOR MARIMO
     # =========================================================================
 
     - name: Maak systemd service aan voor Marimo
@@ -175,7 +183,7 @@
         daemon_reload: yes
 
     # =========================================================================
-    # 7. VERIFICATIE
+    # 8. VERIFICATIE
     # =========================================================================
 
     - name: Wacht tot Marimo is opgestart
@@ -198,7 +206,7 @@
           Marimo draait op interne poort {{ marimo_port }}
           Bereikbaar via: https://{{ ansible_fqdn | default('WORKSPACE_URL') }}
           WhisperX: {{ whisperx_check.stdout | default('check failed') }}
-          Werkmap: {{ workdir }} (ResearchDrive)
+          Werkmap: {{ workdir }}
           CUDA: {{ 'JA' if cuda_check.stat.exists else 'NEE - voeg CUDA component toe!' }}
 
   # =========================================================================
