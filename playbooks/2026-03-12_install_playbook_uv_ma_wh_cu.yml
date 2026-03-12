@@ -6,7 +6,7 @@
 
   vars:
     install_user: ubuntu
-    workdir: /home/ubuntu/researchdrive
+    workdir: /home/ubuntu/whisperx
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
 
