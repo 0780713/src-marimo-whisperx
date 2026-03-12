@@ -1,12 +1,12 @@
 ---
-- name: Installeer Marimo + WhisperX op SURF Research Cloud
+- name: Installeer Marimo op SURF Research Cloud v1
   hosts: localhost
   gather_facts: true
   become: true
 
   vars:
     install_user: ubuntu
-    workdir: /home/ubuntu/researchdrive
+    workdir: /home/ubuntu/symlink
     venv_path: /home/ubuntu/venv
     marimo_port: 2718
 
@@ -61,11 +61,6 @@
     # CUDA-component installeren we CPU-versie. Met CUDA-component
     # detecteert torch automatisch de GPU.
 
-    - name: Controleer of CUDA beschikbaar is
-      stat:
-        path: /usr/local/cuda
-      register: cuda_check
-
     - name: Installeer PyTorch (CUDA) als CUDA aanwezig
       become_user: "{{ install_user }}"
       pip:
@@ -74,17 +69,6 @@
           - torchaudio
         virtualenv: "{{ venv_path }}"
         extra_args: "--index-url https://download.pytorch.org/whl/cu121"
-      when: cuda_check.stat.exists
-
-    - name: Installeer PyTorch (CPU) als geen CUDA
-      become_user: "{{ install_user }}"
-      pip:
-        name:
-          - torch
-          - torchaudio
-        virtualenv: "{{ venv_path }}"
-        extra_args: "--index-url https://download.pytorch.org/whl/cpu"
-      when: not cuda_check.stat.exists
 
     - name: Installeer WhisperX
       become_user: "{{ install_user }}"
@@ -98,6 +82,7 @@
         name:
           - pandas
           - openpyxl
+          - numpy
         virtualenv: "{{ venv_path }}"
 
     # =========================================================================
@@ -114,7 +99,7 @@
     - name: Plaats test notebook
       become_user: "{{ install_user }}"
       copy:
-        dest: "{{ workdir }}/transcribe_check.py"
+        dest: "{{ workdir }}/transcribe_v1.py"
         content: |
           import marimo as mo
 
