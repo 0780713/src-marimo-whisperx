@@ -100,26 +100,26 @@
           - openpyxl
         virtualenv: "{{ venv_path }}"
 
-    # =========================================================================
-    # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
-    # =========================================================================
+    # # =========================================================================
+    # # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
+    # # =========================================================================
     
-    - name: Verwijder lokale researchdrive map
-      file:
-        path: /home/ubuntu/researchdrive
-        state: absent
+    # - name: Verwijder lokale researchdrive map
+    #   file:
+    #     path: /home/ubuntu/researchdrive
+    #     state: absent
     
-    - name: Maak symlink naar svannieuwe researchdrive
-      file:
-        src: /home/svannieuwe/researchdrive
-        dest: /home/ubuntu/researchdrive
-        state: link
-        owner: ubuntu
+    # - name: Maak symlink naar svannieuwe researchdrive
+    #   file:
+    #     src: /home/svannieuwe/researchdrive
+    #     dest: /home/ubuntu/researchdrive
+    #     state: link
+    #     owner: ubuntu
     
-    - name: Geef ubuntu toegang tot svannieuwe home
-      file:
-        path: /home/svannieuwe
-        mode: "0755"
+    # - name: Geef ubuntu toegang tot svannieuwe home
+    #   file:
+    #     path: /home/svannieuwe
+    #     mode: "0755"
 
     # =========================================================================
     # 6. NGINX REVERSE PROXY CONFIGURATIE
