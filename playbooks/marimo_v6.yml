@@ -1,5 +1,5 @@
 ---
-- name: Installeer Marimo v4
+- name: Installeer Marimo v6
   hosts: localhost
   gather_facts: true
   become: true
