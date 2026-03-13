@@ -16,97 +16,51 @@
     # 1. SYSTEEM DEPENDENCIES
     # =========================================================================
 
-    - name: Installeer systeempakketten
+    - name: Installeer ffmpeg
       apt:
         update_cache: yes
         name:
-          - python3-pip
-          - python3-venv
           - ffmpeg
-          - libsndfile1
-          - git
         state: present
 
     # =========================================================================
-    # 2. PYTHON VIRTUAL ENVIRONMENT
+    # 2. PYTHON VIRTUAL ENVIRONMENT EN MARIMO VIA UV
     # =========================================================================
 
-    - name: Maak virtuele omgeving aan
+    - name: Maak virtuele omgeving aan met uv
       become_user: "{{ install_user }}"
-      command: python3 -m venv {{ venv_path }}
+      command: uv venv {{ venv_path }}
       args:
         creates: "{{ venv_path }}"
 
-    - name: Upgrade pip in venv
+    - name: Installeer Marimo met uv
       become_user: "{{ install_user }}"
-      pip:
-        name: pip
-        state: latest
-        virtualenv: "{{ venv_path }}"
+      command: uv pip install marimo
+      environment:
+        VIRTUAL_ENV: "{{ venv_path }}"
 
     # =========================================================================
-    # 3. INSTALLEER MARIMO
+    # 3. MARIMO CONFIGURATIE (uv als package manager)
     # =========================================================================
 
-    - name: Installeer Marimo
+    - name: Maak marimo config directory aan
       become_user: "{{ install_user }}"
-      pip:
-        name: marimo
-        virtualenv: "{{ venv_path }}"
+      file:
+        path: /home/{{ install_user }}/.config/marimo
+        state: directory
+        mode: "0755"
 
-    # =========================================================================
-    # 4. INSTALLEER WHISPERX + DEPENDENCIES
-    # =========================================================================
-    # WhisperX heeft PyTorch met CUDA nodig. Op een workspace ZONDER
-    # CUDA-component installeren we CPU-versie. Met CUDA-component
-    # detecteert torch automatisch de GPU.
-
-    - name: Controleer of CUDA beschikbaar is
-      stat:
-        path: /usr/local/cuda
-      register: cuda_check
-
-    - name: Installeer PyTorch (CUDA) als CUDA aanwezig
+    - name: Configureer marimo om uv te gebruiken
       become_user: "{{ install_user }}"
-      pip:
-        name:
-          - torch
-          - torchaudio
-        virtualenv: "{{ venv_path }}"
-        extra_args: "--index-url https://download.pytorch.org/whl/cu121"
-      when: cuda_check.stat.exists
-
-    - name: Installeer PyTorch (CPU) als geen CUDA
-      become_user: "{{ install_user }}"
-      pip:
-        name:
-          - torch
-          - torchaudio
-        virtualenv: "{{ venv_path }}"
-        extra_args: "--index-url https://download.pytorch.org/whl/cpu"
-      when: not cuda_check.stat.exists
-
-    - name: Installeer WhisperX
-      become_user: "{{ install_user }}"
-      pip:
-        name: whisperx
-        virtualenv: "{{ venv_path }}"
-
-    - name: Installeer extra Python packages
-      become_user: "{{ install_user }}"
-      pip:
-        name:
-          - pandas
-          - openpyxl
-          - numpy
-        virtualenv: "{{ venv_path }}"
+      copy:
+        dest: /home/{{ install_user }}/.config/marimo/marimo.toml
+        content: |
+          [package_management]
+          manager = "uv"
 
     # =========================================================================
     # 5. RESEARCHDRIVE KOPPELEN AAN UBUNTU
     # =========================================================================
-    # ResearchDrive wordt door SRC gemount onder de home van de portaalgebruiker
-    # (bijv. /home/svannieuwe/researchdrive). We maken die toegankelijk voor
-    # ubuntu via een symlink.
 
     - name: Zoek portaalgebruiker (niet ubuntu) in /home
       shell: ls /home | grep -v ubuntu | head -1
@@ -145,7 +99,7 @@
     # 6. NGINX REVERSE PROXY CONFIGURATIE
     # =========================================================================
 
-    - name: Controleer of nginx app-location-conf.d directory bestaat
+    - name: Maak nginx app-location-conf.d directory aan
       file:
         path: /etc/nginx/app-location-conf.d
         state: directory
@@ -186,6 +140,7 @@
           User={{ install_user }}
           WorkingDirectory={{ workdir }}
           Environment="PATH={{ venv_path }}/bin:/usr/local/bin:/usr/bin:/bin"
+          Environment="VIRTUAL_ENV={{ venv_path }}"
           ExecStart={{ venv_path }}/bin/marimo edit --host 0.0.0.0 --port {{ marimo_port }} --no-token
           Restart=on-failure
           RestartSec=5
@@ -210,23 +165,14 @@
         delay: 3
         timeout: 30
 
-    - name: Verifieer WhisperX installatie
-      become_user: "{{ install_user }}"
-      command: "{{ venv_path }}/bin/python -c 'import whisperx; print(\"WhisperX OK\")'"
-      register: whisperx_check
-      changed_when: false
-      ignore_errors: yes
-
     - name: Installatie voltooid
       debug:
         msg: |
           === INSTALLATIE VOLTOOID ===
-          Marimo draait op interne poort {{ marimo_port }}
+          Marimo draait op poort {{ marimo_port }}
           Bereikbaar via: https://{{ ansible_fqdn | default('WORKSPACE_URL') }}
-          WhisperX: {{ whisperx_check.stdout | default('check failed') }}
           Werkmap: {{ workdir }}
-          ResearchDrive portaalgebruiker: {{ portal_user.stdout | default('niet gevonden') }}
-          CUDA: {{ 'JA' if cuda_check.stat.exists else 'NEE - voeg CUDA component toe!' }}
+          Package manager: uv (packages installeren via Marimo UI)
 
   # =========================================================================
   # HANDLERS
